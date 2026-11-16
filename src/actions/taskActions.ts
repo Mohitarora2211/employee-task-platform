@@ -13,7 +13,6 @@ export async function createTask(formData: FormData) {
   const priorityRaw = formData.get("priority") as string;
   const dueDateRaw = formData.get("dueDate") as string;
 
-  // Map priority string to match Prisma Enum (LOW, MEDIUM, HIGH)
   let priority = "MEDIUM";
   if (priorityRaw?.toUpperCase().includes("HIGH")) {
     priority = "HIGH";
@@ -45,5 +44,27 @@ export async function createTask(formData: FormData) {
     revalidatePath("/");
   } catch (error) {
     console.error("Detailed Error creating task in DB:", error);
+  }
+}
+
+export async function updateTaskStatus(formData: FormData) {
+  const taskId = formData.get("taskId") as string;
+  const status = formData.get("status") as string;
+
+  if (!taskId || !status) {
+    console.error("Missing taskId or status for update");
+    return;
+  }
+
+  try {
+    const updatedTask = await prisma.task.update({
+      where: { id: taskId },
+      data: { status: status as any },
+    });
+
+    console.log("Task status updated successfully:", updatedTask);
+    revalidatePath("/");
+  } catch (error) {
+    console.error("Error updating task status:", error);
   }
 }

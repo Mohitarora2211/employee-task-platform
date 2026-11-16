@@ -2,8 +2,9 @@ import { PrismaClient } from '@prisma/client';
 import { currentUser } from '@clerk/nextjs/server';
 import TaskManager from '../components/TaskManager';
 import CreationForms from '../components/CreationForms';
-import { Users, FolderKanban, CheckSquare, Sparkles } from 'lucide-react';
+import { Users, FolderKanban, CheckSquare, Sparkles, Clock, CheckCircle2 } from 'lucide-react';
 import UserMenu from '../components/UserMenu';
+import { updateTaskStatus } from '../actions/taskActions';
 
 const prisma = new PrismaClient();
 
@@ -17,7 +18,6 @@ export default async function DashboardPage() {
     console.error("Clerk fetch failed (Network/Offline issue), using fallback user.");
   }
   
-  // Fallback user object agar Clerk fail ya abort ho jaye
   const currentUserObj = user || {
     publicMetadata: { role: 'admin' },
     emailAddresses: [{ emailAddress: 'admin@example.com' }]
@@ -42,8 +42,6 @@ export default async function DashboardPage() {
       include: { employee: true, project: true },
       orderBy: { dueDate: 'asc' },
     });
-
-    console.log("Fetched Tasks from DB:", tasks);
   } catch (dbError) {
     console.error("Database fetch error:", dbError);
   }
@@ -51,7 +49,11 @@ export default async function DashboardPage() {
   const currentEmployee = employees.find((emp: any) => emp.email === userEmail);
   const employeeTasks = tasks.filter((t: any) => t.employeeId === currentEmployee?.id);
 
-  // Smart Role Detection: Agar metadata me role defined hai toh woh use hoga, warna agar user employee list me hai toh 'employee' ban jayega
+  // Employee Stats Calculation
+  const totalTasks = employeeTasks.length;
+  const completedTasks = employeeTasks.filter((t: any) => t.status === 'COMPLETED').length;
+  const pendingTasks = totalTasks - completedTasks;
+
   const metadataRole = (currentUserObj.publicMetadata as { role?: string })?.role;
   const role = metadataRole || (currentEmployee ? 'employee' : 'admin');
 
@@ -77,7 +79,7 @@ export default async function DashboardPage() {
         </div>
       </header>
 
-      {/* ADMIN VIEW: Complete Management Panel */}
+      {/* ADMIN VIEW */}
       {role === 'admin' ? (
         <>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
@@ -119,8 +121,42 @@ export default async function DashboardPage() {
           <TaskManager initialTasks={tasks} employees={employees} projects={projects} />
         </>
       ) : (
-        /* EMPLOYEE VIEW: Personal Tasks Portal */
+        /* EMPLOYEE VIEW: Stats & Interactive Task Portal */
         <div className="space-y-6">
+          {/* Stats Widgets */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="bg-gray-900/30 border border-gray-800/80 p-6 rounded-3xl backdrop-blur-xl flex items-center justify-between">
+              <div>
+                <p className="text-xs font-bold text-blue-400 uppercase tracking-wider">Total Assigned</p>
+                <h3 className="text-3xl font-extrabold text-white mt-1">{totalTasks}</h3>
+              </div>
+              <span className="p-3 bg-blue-500/10 text-blue-400 rounded-2xl border border-blue-500/20">
+                <CheckSquare className="w-6 h-6" />
+              </span>
+            </div>
+
+            <div className="bg-gray-900/30 border border-gray-800/80 p-6 rounded-3xl backdrop-blur-xl flex items-center justify-between">
+              <div>
+                <p className="text-xs font-bold text-amber-400 uppercase tracking-wider">Pending / In Progress</p>
+                <h3 className="text-3xl font-extrabold text-white mt-1">{pendingTasks}</h3>
+              </div>
+              <span className="p-3 bg-amber-500/10 text-amber-400 rounded-2xl border border-amber-500/20">
+                <Clock className="w-6 h-6" />
+              </span>
+            </div>
+
+            <div className="bg-gray-900/30 border border-gray-800/80 p-6 rounded-3xl backdrop-blur-xl flex items-center justify-between">
+              <div>
+                <p className="text-xs font-bold text-emerald-400 uppercase tracking-wider">Completed</p>
+                <h3 className="text-3xl font-extrabold text-white mt-1">{completedTasks}</h3>
+              </div>
+              <span className="p-3 bg-emerald-500/10 text-emerald-400 rounded-2xl border border-emerald-500/20">
+                <CheckCircle2 className="w-6 h-6" />
+              </span>
+            </div>
+          </div>
+
+          {/* Assigned Tasks List with Status Updater */}
           <div className="bg-gray-900/30 border border-gray-800/80 p-6 rounded-3xl backdrop-blur-xl">
             <h3 className="text-xl font-bold text-white mb-4">Your Assigned Tasks</h3>
             {employeeTasks.length === 0 ? (
@@ -128,14 +164,37 @@ export default async function DashboardPage() {
             ) : (
               <div className="space-y-3">
                 {employeeTasks.map((task: any) => (
-                  <div key={task.id} className="bg-gray-800/40 border border-gray-700/50 p-4 rounded-2xl flex justify-between items-center">
+                  <div key={task.id} className="bg-gray-800/40 border border-gray-700/50 p-4 rounded-2xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                     <div>
-                      <h4 className="font-semibold text-white">{task.title}</h4>
-                      <p className="text-xs text-gray-400">{task.description || 'No description'}</p>
+                      <h4 className="font-semibold text-white text-base">{task.title}</h4>
+                      <p className="text-xs text-gray-400 mt-0.5">{task.description || 'No description'}</p>
+                      <div className="flex items-center gap-3 mt-2 text-xs text-gray-400">
+                        <span>Project: <strong className="text-gray-300">{task.project?.name || 'N/A'}</strong></span>
+                        <span>•</span>
+                        <span>Priority: <strong className="text-gray-300">{task.priority}</strong></span>
+                      </div>
                     </div>
-                    <span className="px-3 py-1 bg-blue-500/10 border border-blue-500/30 text-blue-400 text-xs rounded-full">
-                      {task.status}
-                    </span>
+
+                    {/* Status Update Form with Hidden Input */}
+                    <form action={updateTaskStatus} className="flex items-center gap-2">
+                      <input type="hidden" name="taskId" value={task.id} />
+                      <select 
+                        key={task.status}
+                        name="status" 
+                        defaultValue={task.status}
+                        className="bg-gray-900 border border-gray-700 text-xs text-gray-200 px-3 py-2 rounded-xl focus:outline-none focus:border-blue-500 cursor-pointer"
+                      >
+                        <option value="TODO">TODO</option>
+                        <option value="IN_PROGRESS">IN PROGRESS</option>
+                        <option value="COMPLETED">COMPLETED</option>
+                      </select>
+                      <button 
+                        type="submit"
+                        className="px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-xl transition-all shadow-lg"
+                      >
+                        Update
+                      </button>
+                    </form>
                   </div>
                 ))}
               </div>
